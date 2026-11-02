@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { HeaderTelemetry } from './components/HeaderTelemetry';
 import { NavigationDock } from './components/NavigationDock';
@@ -18,61 +18,133 @@ import { FriendsView } from './views/FriendsView';
 import { BazaarView } from './views/BazaarView';
 import { ProfileView } from './views/ProfileView';
 
+const PRIVATE_ROUTES = new Set([
+ '/home',
+ '/learn',
+ '/viva',
+ '/hub',
+ '/friends',
+ '/bazaar',
+ '/profile',
+]);
+
 const MainAppContent: React.FC = () => {
-  const { currentRoute, isUpdateRequired, theme } = useApp();
+ const {
+ currentRoute,
+ isUpdateRequired,
+ theme,
+ authLoading,
+ session,
+ user,
+ navigate,
+ } = useApp();
 
-  // HARD-LOCK "BLANK SCREEN" APP UPDATE KILL-SWITCH (WhatsApp-Style Gate)
-  if (isUpdateRequired) {
-    return <HardLockUpdateScreen />;
-  }
+ useEffect(() => {
+ if (authLoading) return;
 
-  // Theme wrapper classes
-  const getThemeClass = () => {
-    switch (theme) {
-      case 'charcoal':
-        return 'dark bg-[#141416] text-white';
-      case 'oled':
-        return 'dark bg-[#000000] text-cyan-200';
-      case 'jjk':
-        return 'dark bg-[#120824] text-purple-200';
-      case 'hinokami':
-        return 'dark bg-[#1c0808] text-amber-200';
-      case 'pastel':
-      default:
-        return 'bg-[#FAF8F5] text-slate-900';
-    }
-  };
+ if (!session) {
+ if (currentRoute !== '/auth') navigate('/auth');
+ return;
+ }
 
-  const showHeader = currentRoute !== '/learn' && currentRoute !== '/viva' && currentRoute !== '/auth' && currentRoute !== '/onboarding';
+ if (!user.onboardingComplete) {
+ if (currentRoute !== '/onboarding') navigate('/onboarding');
+ return;
+ }
 
-  return (
-    <div className={`min-h-screen w-full transition-colors duration-300 md:pl-20 ${getThemeClass()}`}>
-      {/* Top Global Telemetry Header */}
-      {showHeader && <HeaderTelemetry />}
+ if (currentRoute === '/auth' || currentRoute === '/onboarding') {
+ navigate('/home');
+ }
+ }, [
+ authLoading,
+ currentRoute,
+ navigate,
+ session,
+ user.onboardingComplete,
+ ]);
 
-      {/* Main View Router */}
-      <main className="w-full">
-        {currentRoute === '/auth' && <AuthView />}
-        {currentRoute === '/onboarding' && <OnboardingView />}
-        {currentRoute === '/home' && <HomeView />}
-        {currentRoute === '/learn' && <LearnView />}
-        {currentRoute === '/viva' && <VivaView />}
-        {currentRoute === '/hub' && <HubView />}
-        {currentRoute === '/friends' && <FriendsView />}
-        {currentRoute === '/bazaar' && <BazaarView />}
-        {currentRoute === '/profile' && <ProfileView />}
-      </main>
+ if (isUpdateRequired) {
+ return <HardLockUpdateScreen />;
+ }
 
-      {/* Adaptive Floating Pill Navigation Dock */}
-      <NavigationDock />
-    </div>
-  );
+ if (authLoading) {
+ return (
+ <div
+ className="min-h-screen w-full bg-[#FAF8F5] text-slate-900"
+ role="status"
+ aria-live="polite"
+ >
+ <div className="mx-auto flex min-h-screen max-w-xl items-center justify-center p-6">
+ Checking your session…
+ </div>
+ </div>
+ );
+ }
+
+ // Never render a protected screen during a route transition.
+ if (!session) {
+ if (currentRoute !== '/auth') return null;
+ } else if (!user.onboardingComplete) {
+ if (currentRoute !== '/onboarding') return null;
+ } else if (
+ !PRIVATE_ROUTES.has(currentRoute) &&
+ currentRoute !== '/auth' &&
+ currentRoute !== '/onboarding'
+ ) {
+ return null;
+ }
+
+ const themeClass = (() => {
+ switch (theme) {
+ case 'charcoal':
+ return 'dark bg-[#141416] text-white';
+ case 'oled':
+ return 'dark bg-[#000000] text-cyan-200';
+ case 'jjk':
+ return 'dark bg-[#120824] text-purple-200';
+ case 'hinokami':
+ return 'dark bg-[#1c0808] text-amber-200';
+ case 'pastel':
+ default:
+ return 'bg-[#FAF8F5] text-slate-900';
+ }
+ })();
+
+ const showHeader =
+ currentRoute !== '/learn' &&
+ currentRoute !== '/viva' &&
+ currentRoute !== '/auth' &&
+ currentRoute !== '/onboarding';
+
+ return (
+ <div className={`min-h-screen w-full transition-colors duration-300 md:pl-20 ${themeClass}`}>
+ {showHeader && <HeaderTelemetry />}
+
+ <main className="w-full">
+ {!session && currentRoute === '/auth' && <AuthView />}
+
+ {session &&
+ !user.onboardingComplete &&
+ currentRoute === '/onboarding' && <OnboardingView />}
+
+ {session && user.onboardingComplete && currentRoute === '/home' && <HomeView />}
+ {session && user.onboardingComplete && currentRoute === '/learn' && <LearnView />}
+ {session && user.onboardingComplete && currentRoute === '/viva' && <VivaView />}
+ {session && user.onboardingComplete && currentRoute === '/hub' && <HubView />}
+ {session && user.onboardingComplete && currentRoute === '/friends' && <FriendsView />}
+ {session && user.onboardingComplete && currentRoute === '/bazaar' && <BazaarView />}
+ {session && user.onboardingComplete && currentRoute === '/profile' && <ProfileView />}
+ </main>
+
+ {session && user.onboardingComplete && <NavigationDock />}
+ </div>
+ );
 };
 
 export default function App() {
-  return (
-    <AppProvider>
-      <MainAppContent />
-    </AppProvider>
-  );
+ return (
+ <AppProvider>
+ <MainAppContent />
+ </AppProvider>
+ );
 }
