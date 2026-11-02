@@ -20,7 +20,7 @@ jobs:
         with:
           node-version: 22
       - name: Install and Build
-        run: npm install && npm run build
+        run: npm install --legacy-peer-deps && npm
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
