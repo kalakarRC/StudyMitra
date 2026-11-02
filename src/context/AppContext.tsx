@@ -1,491 +1,724 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { UserProfile, SubjectChapter, Friend, SurfaceTheme, EnergyMode, BazaarItem } from '../types';
-import { INITIAL_CHAPTERS, INITIAL_FRIENDS, BAZAAR_CATALOG, SCALLOPED_BADGES } from '../data/mockData';
-import { generateRandomCodename, calculateCheckpointRewards } from '../utils/studyLogic';
+import React, {
+ createContext,
+ useCallback,
+ useContext,
+ useEffect,
+ useMemo,
+ useState,
+} from 'react';
+import type { Session } from '@supabase/supabase-js';
+import {
+ UserProfile,
+ SubjectChapter,
+ Friend,
+ SurfaceTheme,
+ EnergyMode,
+ BazaarItem,
+} from '../types';
+import {
+ INITIAL_CHAPTERS,
+ INITIAL_FRIENDS,
+} from '../data/mockData';
+import {
+ generateRandomCodename,
+ calculateCheckpointRewards,
+} from '../utils/studyLogic';
+import { supabase } from '../lib/supabase';
+
+type ProfileUser = UserProfile & { onboardingComplete: boolean };
 
 interface AppContextType {
-  user: UserProfile;
-  chapters: SubjectChapter[];
-  friends: Friend[];
-  currentRoute: string;
-  isUpdateRequired: boolean;
-  activeChapterId: string;
-  unbankedUrja: number;
-  segmentProgressSec: number;
-  sikkaSpin: boolean;
-  theme: SurfaceTheme;
-  isP2PDrawerOpen: boolean;
-  selectedFriendId: string | null;
-  activeBattle: {
-    isOpen: boolean;
-    friendId: string;
-    myScore: number;
-    friendScore: number;
-    questionIndex: number;
-    question: string;
-    options: string[];
-    correctIndex: number;
-  } | null;
-  settingsCardsOrder: string[];
-  
-  // Navigation & Actions
-  navigate: (route: string) => void;
-  setIsUpdateRequired: (val: boolean) => void;
-  loginUser: (email: string, pass: string) => boolean;
-  registerUser: (name: string, username: string, email: string) => void;
-  completeOnboarding: (data: Partial<UserProfile>) => void;
-  setEnergyMode: (mode: EnergyMode) => void;
-  setClassLevel: (lvl: UserProfile['classLevel']) => void;
-  openChapterDetails: (id: string) => void;
-  startLearningChapter: (id: string) => void;
-  startVivaRoom: (id: string) => void;
-  leaveLearningPrematurely: () => void;
-  confirmEarlyExitPenalty: () => void;
-  resumeCurrentSegment: () => void;
-  bankUrjaAndContinue: () => void;
-  bankUrjaAndLeave: () => void;
-  fastForwardCheckpoint: () => void;
-  buyAndEquipItem: (item: BazaarItem) => boolean;
-  equipItem: (item: BazaarItem) => void;
-  addFriendByCodename: (codename: string) => { success: boolean; message: string };
-  openFriendChat: (friendId: string) => void;
-  closeFriendChat: () => void;
-  sendP2PMessage: (friendId: string, text?: string, imageUrl?: string) => void;
-  startBattleWithFriend: (friendId: string) => void;
-  answerBattleQuestion: (index: number) => void;
-  closeBattleModal: () => void;
-  awardSikka: (amount: number) => void;
-  awardUrja: (amount: number) => void;
-  reorderSettingsCards: (newOrder: string[]) => void;
-  togglePinChapter: (chapterId: string) => void;
-  resetChapterProgress: (chapterId: string) => void;
+ user: ProfileUser;
+ session: Session | null;
+ authLoading: boolean;
+ chapters: SubjectChapter[];
+ friends: Friend[];
+ currentRoute: string;
+ isUpdateRequired: boolean;
+ activeChapterId: string;
+ unbankedUrja: number;
+ segmentProgressSec: number;
+ sikkaSpin: boolean;
+ theme: SurfaceTheme;
+ isP2PDrawerOpen: boolean;
+ selectedFriendId: string | null;
+ activeBattle: {
+ isOpen: boolean;
+ friendId: string;
+ myScore: number;
+ friendScore: number;
+ questionIndex: number;
+ question: string;
+ options: string[];
+ correctIndex: number;
+ } | null;
+ settingsCardsOrder: string[];
+
+ navigate: (route: string) => void;
+ setIsUpdateRequired: (val: boolean) => void;
+ loginUser: (email: string, pass: string) => Promise<boolean>;
+ registerUser: (
+ name: string,
+ username: string,
+ email: string,
+ password: string,
+ ) => Promise<{ success: boolean; message: string }>;
+ signOutUser: () => Promise<void>;
+ completeOnboarding: (data: Partial<UserProfile>) => void;
+ setEnergyMode: (mode: EnergyMode) => void;
+ setClassLevel: (lvl: UserProfile['classLevel']) => void;
+ openChapterDetails: (id: string) => void;
+ startLearningChapter: (id: string) => void;
+ startVivaRoom: (id: string) => void;
+ leaveLearningPrematurely: () => void;
+ confirmEarlyExitPenalty: () => void;
+ resumeCurrentSegment: () => void;
+ bankUrjaAndContinue: () => void;
+ bankUrjaAndLeave: () => void;
+ fastForwardCheckpoint: () => void;
+ buyAndEquipItem: (item: BazaarItem) => boolean;
+ equipItem: (item: BazaarItem) => void;
+ addFriendByCodename: (codename: string) => {
+ success: boolean;
+ message: string;
+ };
+ openFriendChat: (friendId: string) => void;
+ closeFriendChat: () => void;
+ sendP2PMessage: (
+ friendId: string,
+ text?: string,
+ imageUrl?: string,
+ ) => void;
+ startBattleWithFriend: (friendId: string) => void;
+ answerBattleQuestion: (index: number) => void;
+ closeBattleModal: () => void;
+ awardSikka: (amount: number) => void;
+ awardUrja: (amount: number) => void;
+ reorderSettingsCards: (newOrder: string[]) => void;
+ togglePinChapter: (chapterId: string) => void;
+ resetChapterProgress: (chapterId: string) => void;
 }
 
-const DEFAULT_USER: UserProfile = {
-  realName: 'Arnav Sharma',
-  username: 'Arnav_Pilot',
-  gmail: 'arnav.sharma@gmail.com',
-  isVerified: true,
-  schoolName: 'Delhi Public School (Bopal, Ahmedabad)',
-  classLevel: 'Class 10',
-  board: 'CBSE',
-  gender: 'Boy',
-  stream: 'PCM & Robotics',
-  dreamCollege: 'LDCE Ahmedabad',
-  targetBranch: 'Robotics & Automation',
-  language: 'Hinglish',
-  interests: ['Robotics', 'Cricket', 'AI Tech'],
-  codename: 'lemon-ball',
-  streak: 12,
-  urja: 1450,
-  sikka: 185,
-  baselineScores: {
-    'Mathematics': 48,
-    'Science': 42.5,
-    'Social Science': 54,
-    'English': 66
-  },
-  targetDaysLeft: 109,
-  weakChapters: ['sci-light', 'math-triangles'],
-  energyMode: 'full',
-  equippedItems: {
-    upperBodyDrip: 'drip-gold-chain',
-    avatarRing: 'ring-neon-pulse',
-    cardSkin: 'skin-holo-foil',
-    streakFlame: 'flame-classic-orange',
-    theme: 'pastel'
-  },
-  purchasedItems: ['drip-gold-chain', 'ring-neon-pulse', 'skin-holo-foil', 'flame-classic-orange', 'theme-pastel', 'theme-charcoal', 'theme-oled'],
-  unlockedBadges: ['b1', 'b2', 'b3'],
-  checkpointsCleared: 14,
-  weakZonesFixed: 3,
-  battlesWon: 6,
-  totalBattles: 9
+const DEFAULT_USER: ProfileUser = {
+ realName: '',
+ username: '',
+ gmail: '',
+ isVerified: false,
+ schoolName: '',
+ classLevel: 'Class 10',
+ board: 'CBSE',
+ gender: '',
+ stream: '',
+ dreamCollege: '',
+ targetBranch: '',
+ language: 'Hinglish',
+ interests: [],
+ codename: '',
+ streak: 0,
+ urja: 0,
+ sikka: 0,
+ baselineScores: {},
+ targetDaysLeft: 0,
+ weakChapters: [],
+ energyMode: 'full',
+ equippedItems: {
+ upperBodyDrip: '',
+ avatarRing: '',
+ cardSkin: '',
+ streakFlame: '',
+ theme: 'pastel',
+ },
+ purchasedItems: [],
+ unlockedBadges: [],
+ checkpointsCleared: 0,
+ weakZonesFixed: 0,
+ battlesWon: 0,
+ totalBattles: 0,
+ onboardingComplete: false,
 };
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<UserProfile>(() => {
-    try {
-      const saved = localStorage.getItem('studymitra_user_v1');
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return DEFAULT_USER;
-  });
+const readStorage = <T,>(key: string, fallback: T): T => {
+ try {
+ const value = localStorage.getItem(key);
+ return value ? (JSON.parse(value) as T) : fallback;
+ } catch {
+ return fallback;
+ }
+};
 
-  const [chapters, setChapters] = useState<SubjectChapter[]>(() => {
-    try {
-      const saved = localStorage.getItem('studymitra_chapters_v1');
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return INITIAL_CHAPTERS;
-  });
+const writeStorage = (key: string, value: unknown) => {
+ try {
+ localStorage.setItem(key, JSON.stringify(value));
+ } catch {
+ // Storage may be unavailable or full.
+ }
+};
 
-  const [friends, setFriends] = useState<Friend[]>(() => {
-    try {
-      const saved = localStorage.getItem('studymitra_friends_v1');
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return INITIAL_FRIENDS;
-  });
+const profileStorageKey = (id: string) => `studymitra_user_v1:${id}`;
 
-  const [currentRoute, setCurrentRoute] = useState<string>('/home');
-  const [isUpdateRequired, setIsUpdateRequired] = useState<boolean>(false);
-  const [activeChapterId, setActiveChapterId] = useState<string>('sci-light');
-  const [unbankedUrja, setUnbankedUrja] = useState<number>(45);
-  const [segmentProgressSec, setSegmentProgressSec] = useState<number>(85); // 0 to 210s (3.5 mins)
-  const [sikkaSpin, setSikkaSpin] = useState<boolean>(false);
-  const [selectedFriendId, setSelectedFriendId] = useState<string | null>(null);
-  const [isP2PDrawerOpen, setIsP2PDrawerOpen] = useState<boolean>(false);
-  
-  const [settingsCardsOrder, setSettingsCardsOrder] = useState<string[]>([
-    'ai-packs', 'look-feel', 'multi-ai', 'storage', 'mitra-xtra', 'backup', 'interface'
-  ]);
+export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
+ children,
+}) => {
+ const [session, setSession] = useState<Session | null>(null);
+ const [authLoading, setAuthLoading] = useState(true);
+ const [user, setUser] = useState<ProfileUser>(DEFAULT_USER);
 
-  const [activeBattle, setActiveBattle] = useState<{
-    isOpen: boolean;
-    friendId: string;
-    myScore: number;
-    friendScore: number;
-    questionIndex: number;
-    question: string;
-    options: string[];
-    correctIndex: number;
-  } | null>(null);
+ const [chapters, setChapters] = useState<SubjectChapter[]>(() =>
+ readStorage('studymitra_chapters_v1', INITIAL_CHAPTERS),
+ );
+ const [friends, setFriends] = useState<Friend[]>(() =>
+ readStorage('studymitra_friends_v1', INITIAL_FRIENDS),
+ );
 
-  // Sync to local storage
-  useEffect(() => {
-    try {
-      localStorage.setItem('studymitra_user_v1', JSON.stringify(user));
-    } catch {}
-  }, [user]);
+ const [currentRoute, setCurrentRoute] = useState('/home');
+ const [isUpdateRequired, setIsUpdateRequired] = useState(false);
+ const [activeChapterId, setActiveChapterId] = useState('sci-light');
+ const [unbankedUrja, setUnbankedUrja] = useState(45);
+ const [segmentProgressSec, setSegmentProgressSec] = useState(85);
+ const [sikkaSpin, setSikkaSpin] = useState(false);
+ const [selectedFriendId, setSelectedFriendId] = useState<string | null>(null);
+ const [isP2PDrawerOpen, setIsP2PDrawerOpen] = useState(false);
+ const [settingsCardsOrder, setSettingsCardsOrder] = useState<string[]>([
+ 'ai-packs',
+ 'look-feel',
+ 'multi-ai',
+ 'storage',
+ 'mitra-xtra',
+ 'backup',
+ 'interface',
+ ]);
 
-  useEffect(() => {
-    try {
-      localStorage.setItem('studymitra_chapters_v1', JSON.stringify(chapters));
-    } catch {}
-  }, [chapters]);
+ const [activeBattle, setActiveBattle] =
+ useState<AppContextType['activeBattle']>(null);
 
-  useEffect(() => {
-    try {
-      localStorage.setItem('studymitra_friends_v1', JSON.stringify(friends));
-    } catch {}
-  }, [friends]);
+ const hydrateProfile = useCallback((authSession: Session | null) => {
+ setSession(authSession);
 
-  // Handle coin spin effect
-  const triggerSikkaSpin = () => {
-    setSikkaSpin(true);
-    setTimeout(() => setSikkaSpin(false), 900);
-  };
+ if (!authSession) {
+ setUser(DEFAULT_USER);
+ setCurrentRoute('/auth');
+ setAuthLoading(false);
+ return;
+ }
 
-  const awardSikka = (amt: number) => {
-    setUser(prev => ({ ...prev, sikka: prev.sikka + amt }));
-    triggerSikkaSpin();
-  };
+ const id = authSession.user.id;
+ const saved = readStorage<Partial<ProfileUser> | null>(
+ profileStorageKey(id),
+ null,
+ );
+ const metadata = authSession.user.user_metadata ?? {};
 
-  const awardUrja = (amt: number) => {
-    setUser(prev => ({ ...prev, urja: prev.urja + amt }));
-  };
+ const hydrated: ProfileUser = {
+...DEFAULT_USER,
+...saved,
+ realName:
+ saved?.realName ??
+ (typeof metadata.realName === 'string' ? metadata.realName : ''),
+ username:
+ saved?.username ??
+ (typeof metadata.username === 'string' ? metadata.username : ''),
+ gmail: authSession.user.email ?? '',
+ isVerified: Boolean(authSession.user.email_confirmed_at),
+ codename:
+ saved?.codename ??
+ (typeof metadata.codename === 'string'
+ ? metadata.codename
+ : generateRandomCodename()),
+ onboardingComplete: saved?.onboardingComplete === true,
+ };
 
-  const navigate = (route: string) => {
-    setCurrentRoute(route);
-  };
+ setUser(hydrated);
+ setCurrentRoute(
+ hydrated.onboardingComplete ? '/home' : '/onboarding',
+ );
+ setAuthLoading(false);
+ }, []);
 
-  const loginUser = (email: string, _pass: string) => {
-    setUser(prev => ({ ...prev, gmail: email, isVerified: true }));
-    navigate('/home');
-    return true;
-  };
+ useEffect(() => {
+ let alive = true;
 
-  const registerUser = (name: string, username: string, email: string) => {
-    setUser(prev => ({
-      ...prev,
-      realName: name,
-      username,
-      gmail: email,
-      codename: generateRandomCodename(),
-      isVerified: false
-    }));
-  };
+ const {
+ data: { subscription },
+ } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+ if (!alive) return;
 
-  const completeOnboarding = (data: Partial<UserProfile>) => {
-    setUser(prev => ({ ...prev, ...data }));
-    navigate('/home');
-  };
+ // Defer React updates out of the Supabase auth callback.
+ queueMicrotask(() => {
+ if (alive) hydrateProfile(nextSession);
+ });
+ });
 
-  const setEnergyMode = (mode: EnergyMode) => {
-    setUser(prev => ({ ...prev, energyMode: mode }));
-  };
+ supabase.auth
+.getSession()
+.then(({ data, error }) => {
+ if (!alive) return;
+ if (error) {
+ hydrateProfile(null);
+ return;
+ }
+ hydrateProfile(data.session);
+ })
+.catch(() => {
+ if (alive) hydrateProfile(null);
+ });
 
-  const setClassLevel = (lvl: UserProfile['classLevel']) => {
-    setUser(prev => ({ ...prev, classLevel: lvl }));
-  };
+ return () => {
+ alive = false;
+ subscription.unsubscribe();
+ };
+ }, [hydrateProfile]);
 
-  const openChapterDetails = (id: string) => {
-    setActiveChapterId(id);
-  };
+ useEffect(() => {
+ if (!session) return;
+ writeStorage(profileStorageKey(session.user.id), user);
+ }, [session, user]);
 
-  const startLearningChapter = (id: string) => {
-    setActiveChapterId(id);
-    setSegmentProgressSec(45);
-    setUnbankedUrja(30);
-    navigate('/learn');
-  };
+ useEffect(() => {
+ writeStorage('studymitra_chapters_v1', chapters);
+ }, [chapters]);
 
-  const startVivaRoom = (id: string) => {
-    setActiveChapterId(id);
-    navigate('/viva');
-  };
+ useEffect(() => {
+ writeStorage('studymitra_friends_v1', friends);
+ }, [friends]);
 
-  const leaveLearningPrematurely = () => {
-    // triggers warning modal inside /learn
-  };
+ const navigate = useCallback((route: string) => {
+ setCurrentRoute(route);
+ }, []);
 
-  const confirmEarlyExitPenalty = () => {
-    // Lose unbanked urja and return home
-    setUnbankedUrja(0);
-    navigate('/home');
-  };
+ const loginUser = useCallback(
+ async (email: string, pass: string) => {
+ const { error } = await supabase.auth.signInWithPassword({
+ email: email.trim(),
+ password: pass,
+ });
 
-  const resumeCurrentSegment = () => {
-    // continues segment
-  };
+ if (error) return false;
+ return true;
+ },
+ [],
+ );
 
-  const bankUrjaAndContinue = () => {
-    const rewards = calculateCheckpointRewards(user.energyMode);
-    setUser(prev => ({
-      ...prev,
-      urja: prev.urja + rewards.urjaEarned,
-      sikka: prev.sikka + rewards.sikkaEarned,
-      checkpointsCleared: prev.checkpointsCleared + 1
-    }));
-    triggerSikkaSpin();
-    setUnbankedUrja(0);
-    setSegmentProgressSec(0);
-  };
+ const registerUser = useCallback(
+ async (
+ name: string,
+ username: string,
+ email: string,
+ password: string,
+ ) => {
+ const cleanEmail = email.trim().toLowerCase();
+ const codename = generateRandomCodename();
 
-  const bankUrjaAndLeave = () => {
-    bankUrjaAndContinue();
-    navigate('/home');
-  };
+ const { data, error } = await supabase.auth.signUp({
+ email: cleanEmail,
+ password,
+ options: {
+ data: {
+ realName: name.trim(),
+ username: username.trim(),
+ codename,
+ },
+ emailRedirectTo: window.location.origin,
+ },
+ });
 
-  const fastForwardCheckpoint = () => {
-    setSegmentProgressSec(210); // reach 3.5 min mark instantly
-  };
+ if (error) {
+ return { success: false, message: error.message };
+ }
 
-  const buyAndEquipItem = (item: BazaarItem) => {
-    if (user.sikka < item.price) return false;
-    setUser(prev => {
-      const newSikka = prev.sikka - item.price;
-      const newPurchased = [...prev.purchasedItems, item.id];
-      const newEquipped = { ...prev.equippedItems };
-      if (item.category === 'drip') newEquipped.upperBodyDrip = item.id;
-      if (item.category === 'rings') newEquipped.avatarRing = item.id;
-      if (item.category === 'skins') newEquipped.cardSkin = item.id;
-      if (item.category === 'flames') newEquipped.streakFlame = item.id;
-      if (item.category === 'themes') newEquipped.theme = item.id.replace('theme-', '') as SurfaceTheme;
-      return {
-        ...prev,
-        sikka: newSikka,
-        purchasedItems: newPurchased,
-        equippedItems: newEquipped
-      };
-    });
-    triggerSikkaSpin();
-    return true;
-  };
+ if (data.session) {
+ const nextUser: ProfileUser = {
+...DEFAULT_USER,
+ realName: name.trim(),
+ username: username.trim(),
+ gmail: cleanEmail,
+ codename,
+ isVerified: Boolean(data.user?.email_confirmed_at),
+ onboardingComplete: false,
+ };
+ setUser(nextUser);
+ setCurrentRoute('/onboarding');
+ return { success: true, message: 'Account created. Continue onboarding.' };
+ }
 
-  const equipItem = (item: BazaarItem) => {
-    setUser(prev => {
-      const newEquipped = { ...prev.equippedItems };
-      if (item.category === 'drip') newEquipped.upperBodyDrip = item.id;
-      if (item.category === 'rings') newEquipped.avatarRing = item.id;
-      if (item.category === 'skins') newEquipped.cardSkin = item.id;
-      if (item.category === 'flames') newEquipped.streakFlame = item.id;
-      if (item.category === 'themes') newEquipped.theme = item.id.replace('theme-', '') as SurfaceTheme;
-      return { ...prev, equippedItems: newEquipped };
-    });
-  };
+ return {
+ success: true,
+ message: 'Check your email to confirm your account, then sign in.',
+ };
+ },
+ [],
+ );
 
-  const addFriendByCodename = (codename: string) => {
-    const clean = codename.trim().toLowerCase();
-    if (!clean) return { success: false, message: 'Please enter a valid codename' };
-    if (clean === user.codename) return { success: false, message: 'You cannot add your own codename!' };
-    const existing = friends.find(f => f.codename.toLowerCase() === clean);
-    if (existing) return { success: false, message: `Friend @${existing.username} already added!` };
+ const signOutUser = useCallback(async () => {
+ await supabase.auth.signOut();
+ setSession(null);
+ setUser(DEFAULT_USER);
+ setCurrentRoute('/auth');
+ }, []);
 
-    const newFriend: Friend = {
-      id: `f-${Date.now()}`,
-      codename: clean,
-      username: `${clean.split('-')[0]}_star`,
-      realName: `${clean.charAt(0).toUpperCase() + clean.slice(1)} Student`,
-      rankBadge: 'Gold II',
-      streak: 5,
-      avatarSeed: clean,
-      battlesCount: 0,
-      messages: [
-        {
-          id: `msg-${Date.now()}`,
-          sender: 'them',
-          text: `Added via Codename ${clean}! Let's study together.`,
-          timestamp: 'Just now'
-        }
-      ]
-    };
-    setFriends(prev => [newFriend, ...prev]);
-    return { success: true, message: `Connected with ${newFriend.realName} (@${newFriend.username})!` };
-  };
+ const completeOnboarding = useCallback(
+ (data: Partial<UserProfile>) => {
+ setUser((previous) => ({
+...previous,
+...data,
+ onboardingComplete: true,
+ }));
+ setCurrentRoute('/home');
+ },
+ [],
+ );
 
-  const openFriendChat = (friendId: string) => {
-    setSelectedFriendId(friendId);
-    setIsP2PDrawerOpen(true);
-  };
+ const setEnergyMode = (mode: EnergyMode) => {
+ setUser((previous) => ({...previous, energyMode: mode }));
+ };
 
-  const closeFriendChat = () => {
-    setIsP2PDrawerOpen(false);
-  };
+ const setClassLevel = (lvl: UserProfile['classLevel']) => {
+ setUser((previous) => ({...previous, classLevel: lvl }));
+ };
 
-  const sendP2PMessage = (friendId: string, text?: string, imageUrl?: string) => {
-    setFriends(prev => prev.map(f => {
-      if (f.id !== friendId) return f;
-      return {
-        ...f,
-        messages: [
-          ...f.messages,
-          {
-            id: `msg-${Date.now()}`,
-            sender: 'me',
-            text,
-            imageUrl,
-            timestamp: 'Just now'
-          }
-        ]
-      };
-    }));
-  };
+ const openChapterDetails = (id: string) => setActiveChapterId(id);
 
-  const startBattleWithFriend = (friendId: string) => {
-    setActiveBattle({
-      isOpen: true,
-      friendId,
-      myScore: 50,
-      friendScore: 50,
-      questionIndex: 0,
-      question: 'Which ray passes through the focus of a concave mirror after reflection?',
-      options: [
-        'A ray incident parallel to the principal axis',
-        'A ray incident passing through the center of curvature',
-        'A ray incident obliquely at the pole',
-        'A ray passing through the focus before reflection'
-      ],
-      correctIndex: 0
-    });
-  };
+ const startLearningChapter = (id: string) => {
+ setActiveChapterId(id);
+ setSegmentProgressSec(45);
+ setUnbankedUrja(30);
+ navigate('/learn');
+ };
 
-  const answerBattleQuestion = (index: number) => {
-    if (!activeBattle) return;
-    const isCorrect = index === activeBattle.correctIndex;
-    const shift = isCorrect ? 15 : -10;
-    const newMyScore = Math.min(100, Math.max(0, activeBattle.myScore + shift));
-    const newFriendScore = 100 - newMyScore;
+ const startVivaRoom = (id: string) => {
+ setActiveChapterId(id);
+ navigate('/viva');
+ };
 
-    if (newMyScore >= 95 || newMyScore <= 5) {
-      // Battle over
-      if (newMyScore >= 95) {
-        awardUrja(60);
-        awardSikka(25);
-        setUser(p => ({ ...p, battlesWon: p.battlesWon + 1, totalBattles: p.totalBattles + 1 }));
-      } else {
-        setUser(p => ({ ...p, totalBattles: p.totalBattles + 1 }));
-      }
-    }
+ const leaveLearningPrematurely = () => {
+ // Warning modal is managed inside /learn.
+ };
 
-    setActiveBattle(prev => prev ? ({
-      ...prev,
-      myScore: newMyScore,
-      friendScore: newFriendScore,
-      questionIndex: prev.questionIndex + 1,
-      question: prev.questionIndex === 0 
-        ? 'What is the commercial unit of electrical energy?' 
-        : 'Which theorem states that a parallel line divides triangle sides in equal ratio?',
-      options: prev.questionIndex === 0
-        ? ['Kilowatt-Hour (1 kWh)', 'Joule-second', 'Volt-Ampere', 'Coulomb']
-        : ['Basic Proportionality Theorem (BPT)', 'Pythagoras Theorem', 'Euler Theorem', 'Converse of BPT'],
-      correctIndex: 0
-    }) : null);
-  };
+ const confirmEarlyExitPenalty = () => {
+ setUnbankedUrja(0);
+ navigate('/home');
+ };
 
-  const closeBattleModal = () => {
-    setActiveBattle(null);
-  };
+ const resumeCurrentSegment = () => {
+ // Segment continuation is managed inside /learn.
+ };
 
-  const reorderSettingsCards = (newOrder: string[]) => {
-    setSettingsCardsOrder(newOrder);
-  };
+ const triggerSikkaSpin = () => {
+ setSikkaSpin(true);
+ window.setTimeout(() => setSikkaSpin(false), 900);
+ };
 
-  const togglePinChapter = (chapterId: string) => {
-    setChapters(prev => prev.map(ch => ch.id === chapterId ? { ...ch, isPinned: !ch.isPinned } : ch));
-  };
+ const awardSikka = (amount: number) => {
+ setUser((previous) => ({...previous, sikka: previous.sikka + amount }));
+ triggerSikkaSpin();
+ };
 
-  const resetChapterProgress = (chapterId: string) => {
-    setChapters(prev => prev.map(ch => ch.id === chapterId ? { ...ch, accuracy: 0, competencyPct: 0 } : ch));
-  };
+ const awardUrja = (amount: number) => {
+ setUser((previous) => ({...previous, urja: previous.urja + amount }));
+ };
 
-  return (
-    <AppContext.Provider value={{
-      user,
-      chapters,
-      friends,
-      currentRoute,
-      isUpdateRequired,
-      activeChapterId,
-      unbankedUrja,
-      segmentProgressSec,
-      sikkaSpin,
-      theme: user.equippedItems.theme,
-      isP2PDrawerOpen,
-      selectedFriendId,
-      activeBattle,
-      settingsCardsOrder,
-      navigate,
-      setIsUpdateRequired,
-      loginUser,
-      registerUser,
-      completeOnboarding,
-      setEnergyMode,
-      setClassLevel,
-      openChapterDetails,
-      startLearningChapter,
-      startVivaRoom,
-      leaveLearningPrematurely,
-      confirmEarlyExitPenalty,
-      resumeCurrentSegment,
-      bankUrjaAndContinue,
-      bankUrjaAndLeave,
-      fastForwardCheckpoint,
-      buyAndEquipItem,
-      equipItem,
-      addFriendByCodename,
-      openFriendChat,
-      closeFriendChat,
-      sendP2PMessage,
-      startBattleWithFriend,
-      answerBattleQuestion,
-      closeBattleModal,
-      awardSikka,
-      awardUrja,
-      reorderSettingsCards,
-      togglePinChapter,
-      resetChapterProgress
-    }}>
-      {children}
-    </AppContext.Provider>
-  );
+ const bankUrjaAndContinue = () => {
+ const rewards = calculateCheckpointRewards(user.energyMode);
+ setUser((previous) => ({
+...previous,
+ urja: previous.urja + rewards.urjaEarned,
+ sikka: previous.sikka + rewards.sikkaEarned,
+ checkpointsCleared: previous.checkpointsCleared + 1,
+ }));
+ triggerSikkaSpin();
+ setUnbankedUrja(0);
+ setSegmentProgressSec(0);
+ };
+
+ const bankUrjaAndLeave = () => {
+ bankUrjaAndContinue();
+ navigate('/home');
+ };
+
+ const fastForwardCheckpoint = () => setSegmentProgressSec(210);
+
+ const buyAndEquipItem = (item: BazaarItem) => {
+ if (user.sikka < item.price) return false;
+
+ setUser((previous) => {
+ const equippedItems = {...previous.equippedItems };
+
+ if (item.category === 'drip') equippedItems.upperBodyDrip = item.id;
+ if (item.category === 'rings') equippedItems.avatarRing = item.id;
+ if (item.category === 'skins') equippedItems.cardSkin = item.id;
+ if (item.category === 'flames') equippedItems.streakFlame = item.id;
+ if (item.category === 'themes') {
+ equippedItems.theme = item.id.replace('theme-', '') as SurfaceTheme;
+ }
+
+ return {
+...previous,
+ sikka: previous.sikka - item.price,
+ purchasedItems: [...previous.purchasedItems, item.id],
+ equippedItems,
+ };
+ });
+
+ triggerSikkaSpin();
+ return true;
+ };
+
+ const equipItem = (item: BazaarItem) => {
+ setUser((previous) => {
+ const equippedItems = {...previous.equippedItems };
+
+ if (item.category === 'drip') equippedItems.upperBodyDrip = item.id;
+ if (item.category === 'rings') equippedItems.avatarRing = item.id;
+ if (item.category === 'skins') equippedItems.cardSkin = item.id;
+ if (item.category === 'flames') equippedItems.streakFlame = item.id;
+ if (item.category === 'themes') {
+ equippedItems.theme = item.id.replace('theme-', '') as SurfaceTheme;
+ }
+
+ return {...previous, equippedItems };
+ });
+ };
+
+ const addFriendByCodename = (codename: string) => {
+ const clean = codename.trim().toLowerCase();
+
+ if (!clean) {
+ return { success: false, message: 'Please enter a valid codename' };
+ }
+ if (clean === user.codename) {
+ return { success: false, message: 'You cannot add your own codename!' };
+ }
+
+ const existing = friends.find(
+ (friend) => friend.codename.toLowerCase() === clean,
+ );
+ if (existing) {
+ return {
+ success: false,
+ message: `Friend @${existing.username} already added!`,
+ };
+ }
+
+ const newFriend: Friend = {
+ id: `f-${Date.now()}`,
+ codename: clean,
+ username: `${clean.split('-')[0]}_star`,
+ realName: `${clean.charAt(0).toUpperCase() + clean.slice(1)} Student`,
+ rankBadge: 'Gold II',
+ streak: 5,
+ avatarSeed: clean,
+ battlesCount: 0,
+ messages: [
+ {
+ id: `msg-${Date.now()}`,
+ sender: 'them',
+ text: `Added via Codename ${clean}! Let's study together.`,
+ timestamp: 'Just now',
+ },
+ ],
+ };
+
+ setFriends((previous) => [newFriend,...previous]);
+ return {
+ success: true,
+ message: `Connected with ${newFriend.realName} (@${newFriend.username})!`,
+ };
+ };
+
+ const openFriendChat = (friendId: string) => {
+ setSelectedFriendId(friendId);
+ setIsP2PDrawerOpen(true);
+ };
+
+ const closeFriendChat = () => setIsP2PDrawerOpen(false);
+
+ const sendP2PMessage = (
+ friendId: string,
+ text?: string,
+ imageUrl?: string,
+ ) => {
+ setFriends((previous) =>
+ previous.map((friend) =>
+ friend.id !== friendId
+ ? friend
+ : {
+...friend,
+ messages: [
+...friend.messages,
+ {
+ id: `msg-${Date.now()}`,
+ sender: 'me',
+ text,
+ imageUrl,
+ timestamp: 'Just now',
+ },
+ ],
+ },
+ ),
+ );
+ };
+
+ const startBattleWithFriend = (friendId: string) => {
+ setActiveBattle({
+ isOpen: true,
+ friendId,
+ myScore: 50,
+ friendScore: 50,
+ questionIndex: 0,
+ question:
+ 'Which ray passes through the focus of a concave mirror after reflection?',
+ options: [
+ 'A ray incident parallel to the principal axis',
+ 'A ray incident passing through the center of curvature',
+ 'A ray incident obliquely at the pole',
+ 'A ray passing through the focus before reflection',
+ ],
+ correctIndex: 0,
+ });
+ };
+
+ const answerBattleQuestion = (index: number) => {
+ if (!activeBattle) return;
+
+ const isCorrect = index === activeBattle.correctIndex;
+ const newMyScore = Math.min(
+ 100,
+ Math.max(0, activeBattle.myScore + (isCorrect ? 15 : -10)),
+ );
+
+ if (newMyScore >= 95 || newMyScore <= 5) {
+ if (newMyScore >= 95) {
+ awardUrja(60);
+ awardSikka(25);
+ setUser((previous) => ({
+...previous,
+ battlesWon: previous.battlesWon + 1,
+ totalBattles: previous.totalBattles + 1,
+ }));
+ } else {
+ setUser((previous) => ({
+...previous,
+ totalBattles: previous.totalBattles + 1,
+ }));
+ }
+ }
+
+ setActiveBattle((previous) =>
+ previous
+ ? {
+...previous,
+ myScore: newMyScore,
+ friendScore: 100 - newMyScore,
+ questionIndex: previous.questionIndex + 1,
+ question:
+ previous.questionIndex === 0
+ ? 'What is the commercial unit of electrical energy?'
+ : 'Which theorem states that a parallel line divides triangle sides in equal ratio?',
+ options:
+ previous.questionIndex === 0
+ ? ['Kilowatt-Hour (1 kWh)', 'Joule-second', 'Volt-Ampere', 'Coulomb']
+ : [
+ 'Basic Proportionality Theorem (BPT)',
+ 'Pythagoras Theorem',
+ 'Euler Theorem',
+ 'Converse of BPT',
+ ],
+ correctIndex: 0,
+ }
+ : null,
+ );
+ };
+
+ const closeBattleModal = () => setActiveBattle(null);
+
+ const reorderSettingsCards = (newOrder: string[]) => {
+ setSettingsCardsOrder(newOrder);
+ };
+
+ const togglePinChapter = (chapterId: string) => {
+ setChapters((previous) =>
+ previous.map((chapter) =>
+ chapter.id === chapterId
+ ? {...chapter, isPinned: !chapter.isPinned }
+ : chapter,
+ ),
+ );
+ };
+
+ const resetChapterProgress = (chapterId: string) => {
+ setChapters((previous) =>
+ previous.map((chapter) =>
+ chapter.id === chapterId
+ ? {...chapter, accuracy: 0, competencyPct: 0 }
+ : chapter,
+ ),
+ );
+ };
+
+ const theme = useMemo(
+ () => user.equippedItems.theme,
+ [user.equippedItems.theme],
+ );
+
+ const value: AppContextType = {
+ user,
+ session,
+ authLoading,
+ chapters,
+ friends,
+ currentRoute,
+ isUpdateRequired,
+ activeChapterId,
+ unbankedUrja,
+ segmentProgressSec,
+ sikkaSpin,
+ theme,
+ isP2PDrawerOpen,
+ selectedFriendId,
+ activeBattle,
+ settingsCardsOrder,
+ navigate,
+ setIsUpdateRequired,
+ loginUser,
+ registerUser,
+ signOutUser,
+ completeOnboarding,
+ setEnergyMode,
+ setClassLevel,
+ openChapterDetails,
+ startLearningChapter,
+ startVivaRoom,
+ leaveLearningPrematurely,
+ confirmEarlyExitPenalty,
+ resumeCurrentSegment,
+ bankUrjaAndContinue,
+ bankUrjaAndLeave,
+ fastForwardCheckpoint,
+ buyAndEquipItem,
+ equipItem,
+ addFriendByCodename,
+ openFriendChat,
+ closeFriendChat,
+ sendP2PMessage,
+ startBattleWithFriend,
+ answerBattleQuestion,
+ closeBattleModal,
+ awardSikka,
+ awardUrja,
+ reorderSettingsCards,
+ togglePinChapter,
+ resetChapterProgress,
+ };
+
+ return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };
 
 export const useApp = () => {
-  const ctx = useContext(AppContext);
-  if (!ctx) throw new Error('useApp must be used within AppProvider');
-  return ctx;
+ const context = useContext(AppContext);
+ if (!context) {
+ throw new Error('useApp must be used within AppProvider');
+ }
+ return context;
 };
+   
